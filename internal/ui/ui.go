@@ -6,9 +6,11 @@ import (
 	"time"
 
 	grid "github.com/achannarasappa/term-grid"
+	"github.com/achannarasappa/ticker/v4/internal/analysis" // Added
 	"github.com/achannarasappa/ticker/v4/internal/asset"
 	c "github.com/achannarasappa/ticker/v4/internal/common"
 	mon "github.com/achannarasappa/ticker/v4/internal/monitor"
+	"github.com/achannarasappa/ticker/v4/internal/monitor/yahoo/unary" // Added
 	"github.com/achannarasappa/ticker/v4/internal/ui/component/summary"
 	"github.com/achannarasappa/ticker/v4/internal/ui/component/watchlist"
 	"github.com/achannarasappa/ticker/v4/internal/ui/component/watchlist/row"
@@ -37,10 +39,11 @@ type Model struct {
 	headerHeight       int
 	versionVector      int
 	requestInterval    int
-	assets             []c.Asset
-	assetQuotes        []c.AssetQuote
-	assetQuotesLookup  map[string]int
+	analyzedAssets     []analysis.AnalyzedAsset // Changed from assets []c.Asset
+	assetQuotes        []c.AssetQuote           // Retained for SetAssetQuoteMsg, though its direct use is minimized
+	assetQuotesLookup  map[string]int           // Will map to indices in analyzedAssets
 	holdingSummary     asset.HoldingSummary
+	unaryAPIClient     *unary.UnaryAPI // Added
 	viewport           viewport.Model
 	watchlist          *watchlist.Model
 	summary            *summary.Model
@@ -73,15 +76,16 @@ func NewModel(dep c.Dependencies, ctx c.Context, monitors *mon.Monitor) *Model {
 	groupMaxIndex := len(ctx.Groups) - 1
 
 	return &Model{
-		ctx:               ctx,
-		headerHeight:      getVerticalMargin(ctx.Config),
-		ready:             false,
-		requestInterval:   ctx.Config.RefreshInterval,
-		versionVector:     0,
-		assets:            make([]c.Asset, 0),
-		assetQuotes:       make([]c.AssetQuote, 0),
-		assetQuotesLookup: make(map[string]int),
-		holdingSummary:    asset.HoldingSummary{},
+		ctx:                ctx,
+		headerHeight:       getVerticalMargin(ctx.Config),
+		ready:              false,
+		requestInterval:    ctx.Config.RefreshInterval,
+		versionVector:      0,
+		analyzedAssets:     make([]analysis.AnalyzedAsset, 0), // Changed initialization
+		assetQuotes:        make([]c.AssetQuote, 0),           // Retained
+		assetQuotesLookup:  make(map[string]int),
+		holdingSummary:     asset.HoldingSummary{},
+		unaryAPIClient:     monitors.UnaryAPIYahoo, // Assigned
 		watchlist: watchlist.NewModel(watchlist.Config{
 			Sort:                  ctx.Config.Sort,
 			Separate:              ctx.Config.Separate,
@@ -201,7 +205,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		// Update watchlist and summary components
-		m.watchlist, cmd = m.watchlist.Update(watchlist.SetAssetsMsg(m.assets))
+		m.watchlist, cmd = m.watchlist.Update(watchlist.SetAssetsMsg(m.analyzedAssets)) // Pass m.analyzedAssets directly
 		m.summary, _ = m.summary.Update(summary.SetSummaryMsg(m.holdingSummary))
 
 		cmds = append(cmds, cmd)
@@ -229,14 +233,23 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 
-		assets, holdingSummary := asset.GetAssets(m.ctx, msg.assetGroupQuote)
+		// Use GetAnalyzedAssets
+		analyzedAssetsResult, holdingSummaryResult := asset.GetAnalyzedAssets(m.ctx, msg.assetGroupQuote, m.unaryAPIClient)
 
-		m.assets = assets
-		m.holdingSummary = holdingSummary
+		m.analyzedAssets = analyzedAssetsResult
+		m.holdingSummary = holdingSummaryResult
 
-		m.assetQuotes = msg.assetGroupQuote.AssetQuotes
-		for i, assetQuote := range m.assetQuotes {
-			m.assetQuotesLookup[assetQuote.Symbol] = i
+		// Re-populate assetQuotes and assetQuotesLookup from m.analyzedAssets
+		// m.assetQuotes is kept for compatibility with SetAssetQuoteMsg's current structure,
+		// though ideally SetAssetQuoteMsg would also be refactored fully.
+		// For now, we can derive m.assetQuotes from m.analyzedAssets if needed, or accept it might be stale.
+		// The prompt says: "m.assetQuotesLookup will now map to indices within m.analyzedAssets"
+		// This means m.assetQuotes is less relevant for lookup.
+		m.assetQuotes = msg.assetGroupQuote.AssetQuotes // Keep this as it was, for SetAssetQuoteMsg to have a source if it doesn't get refactored.
+
+		m.assetQuotesLookup = make(map[string]int) // Clear the old lookup
+		for i, analyzedAsset := range m.analyzedAssets {
+			m.assetQuotesLookup[analyzedAsset.BaseAsset.Symbol] = i
 		}
 
 		m.groupSelectedName = m.ctx.Groups[m.groupSelectedIndex].Name
@@ -270,20 +283,43 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 
-		// Update the asset quote and generate a new holding summary
-		m.assetQuotes[i] = msg.assetQuote
-
-		assetGroupQuote := c.AssetGroupQuote{
-			AssetQuotes: m.assetQuotes,
-			AssetGroup:  m.ctx.Groups[m.groupSelectedIndex],
+		// Check if this symbol is in the lookup (maps to m.analyzedAssets index)
+		if i, ok = m.assetQuotesLookup[msg.symbol]; !ok {
+			return m, nil
 		}
 
-		assets, holdingSummary := asset.GetAssets(m.ctx, assetGroupQuote)
+		// Check if the index is out of bounds for m.analyzedAssets
+		if i >= len(m.analyzedAssets) {
+			return m, nil
+		}
 
-		m.assets = assets
-		m.holdingSummary = holdingSummary
+		// Check if the symbol is the same in m.analyzedAssets
+		if m.analyzedAssets[i].BaseAsset.Symbol != msg.symbol {
+			return m, nil
+		}
 
-		return m, nil
+		// Update the BaseAsset part of m.analyzedAssets
+		// Note: This only updates the quote part of the BaseAsset.
+		// The Analysis part will be stale until the next SetAssetGroupQuoteMsg.
+		// We need to be careful if assetQuote contains more than just QuotePrice.
+		// For now, let's assume msg.assetQuote is a full c.AssetQuote.
+		// We update the relevant parts of m.analyzedAssets[i].BaseAsset from msg.assetQuote.
+
+		// Example of updating fields (assuming msg.assetQuote is the source of truth for current quote details)
+		m.analyzedAssets[i].BaseAsset.QuotePrice = msg.assetQuote.QuotePrice
+		m.analyzedAssets[i].BaseAsset.QuoteExtended = msg.assetQuote.QuoteExtended // If applicable
+		m.analyzedAssets[i].BaseAsset.QuoteFutures = msg.assetQuote.QuoteFutures   // If applicable
+		// The holding data within m.analyzedAssets[i].BaseAsset.Holding might also need recalculation
+		// based on the new price, but that's complex without full context here.
+		// The prompt says: "For m.holdingSummary, for this subtask, leave it as is."
+		// This implies individual holding values might also be stale.
+
+		// Update the watchlist component directly with m.analyzedAssets
+		var cmd tea.Cmd
+		m.watchlist, cmd = m.watchlist.Update(watchlist.SetAssetsMsg(m.analyzedAssets))
+		// Do not recalculate m.holdingSummary in this subtask for SetAssetQuoteMsg.
+
+		return m, cmd // Return the command from watchlist update
 
 	case row.FrameMsg:
 		var cmd tea.Cmd

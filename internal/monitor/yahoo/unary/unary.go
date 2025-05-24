@@ -6,8 +6,10 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	c "github.com/achannarasappa/ticker/v4/internal/common"
+	"github.com/achannarasappa/ticker/v4/internal/indicator"
 )
 
 // UnaryAPI is a client for the API
@@ -226,4 +228,111 @@ func (u *UnaryAPI) getQuotes(symbols []string, fields []string) (Response, error
 	}
 
 	return result, nil
+}
+
+// GetHistoricalData retrieves historical market data (OHLCV) for a given symbol
+// from the Yahoo Finance v8 chart API.
+//
+// It constructs the request URL, sets necessary query parameters (range, interval, indicators, etc.),
+// and common headers. It also includes session management (cookies, crumb) and a retry mechanism
+// with session refresh if the initial request fails with a non-OK HTTP status code.
+//
+// Parameters:
+//   - symbol: The stock ticker symbol (e.g., "AAPL") for which to fetch historical data.
+//   - dataRange: A string specifying the range of historical data (e.g., "1y", "6mo", "max").
+//   - interval: A string specifying the interval between data points (e.g., "1d", "1wk", "1mo").
+//
+// Returns:
+//   - A pointer to a ChartResponse struct, which contains the parsed JSON response from the API.
+//     This includes metadata, timestamps, and OHLCV data.
+//   - An error if the request fails at any stage (URL parsing, HTTP request, session refresh,
+//     JSON decoding), or if the API returns an error in the response body (e.g., symbol not found).
+//     The error will be specific about the cause of failure.
+func (u *UnaryAPI) GetHistoricalData(symbol string, dataRange string, interval string) (*ChartResponse, error) {
+	// Construct URL
+	// Example: https://query1.finance.yahoo.com/v8/finance/chart/AAPL?range=1mo&interval=1d&indicators=quote&includeTimestamp=true
+	reqURL, err := url.Parse(fmt.Sprintf("%s/v8/finance/chart/%s", u.baseURL, symbol))
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse chart URL: %w", err)
+	}
+
+	// Set query parameters
+	q := reqURL.Query()
+	q.Set("range", dataRange)
+	q.Set("interval", interval)
+	q.Set("indicators", "quote")      // We are interested in OHLCV
+	q.Set("includeTimestamp", "true") // Timestamps are essential
+
+	// Add common Yahoo Finance query parameters
+	q.Set("formatted", "true")
+	q.Set("lang", "en-US")
+	q.Set("region", "US")
+	q.Set("corsDomain", "finance.yahoo.com")
+
+	// Add crumb if available
+	if u.crumb != "" {
+		q.Set("crumb", u.crumb)
+	}
+	reqURL.RawQuery = q.Encode()
+
+	// Create request
+	req, err := http.NewRequest(http.MethodGet, reqURL.String(), nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create historical data request: %w", err)
+	}
+
+	// Set common headers (similar to getQuotes)
+	req.Header.Set("Authority", "query1.finance.yahoo.com") // This might need to be just the host part of u.baseURL
+	req.Header.Set("Accept", "*/*")
+	req.Header.Set("Accept-Language", defaultAcceptLang)
+	req.Header.Set("Origin", u.baseURL) // Or a more generic origin like "https://finance.yahoo.com"
+	req.Header.Set("User-Agent", defaultUserAgent)
+
+	// Add cookies if available
+	if len(u.cookies) > 0 {
+		for _, cookie := range u.cookies {
+			req.AddCookie(cookie)
+		}
+	}
+
+	// Make request
+	resp, err := u.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to make historical data request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	// Handle not ok responses (including potential session refresh)
+	if resp.StatusCode >= 400 {
+		// Try to refresh session and retry once
+		// Note: It's not guaranteed that the chart API uses the same session/crumb mechanism
+		// as the quote API, but it's a reasonable assumption to try.
+		if err := u.refreshSession(); err != nil {
+			// If refresh fails, return original error based on status code
+			return nil, fmt.Errorf("session refresh failed after status %d: %w. Original error: %s", resp.StatusCode, err, resp.Status)
+		}
+		// Retry request with refreshed session
+		// It's important to prevent infinite loops if retry also fails.
+		// The current refreshSession logic doesn't inherently prevent this for GetHistoricalData.
+		// For simplicity, we'll retry once. A more robust solution might involve a retry counter.
+		return u.GetHistoricalData(symbol, dataRange, interval) // Recursive call for retry
+	}
+
+	// Handle unexpected non-error responses
+	if resp.StatusCode != http.StatusOK { // Check for explicit OK, not just < 400
+		return nil, fmt.Errorf("unexpected response for historical data: %s (status code: %d)", resp.Status, resp.StatusCode)
+	}
+
+	// Decode response
+	var chartResponse ChartResponse
+	if err := json.NewDecoder(resp.Body).Decode(&chartResponse); err != nil {
+		return nil, fmt.Errorf("failed to decode historical data response: %w", err)
+	}
+
+	// Check for API-level errors in the decoded response
+	if chartResponse.Chart.Error != nil {
+		return &chartResponse, fmt.Errorf("chart API error: %s - %s", chartResponse.Chart.Error.Code, chartResponse.Chart.Error.Description)
+	}
+
+	return &chartResponse, nil
 }

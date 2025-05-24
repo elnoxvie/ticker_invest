@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/achannarasappa/ticker/v4/internal/analysis" // Added
 	c "github.com/achannarasappa/ticker/v4/internal/common"
 	s "github.com/achannarasappa/ticker/v4/internal/sorter"
 	row "github.com/achannarasappa/ticker/v4/internal/ui/component/watchlist/row"
@@ -25,8 +26,8 @@ type Config struct {
 // Model for watchlist section
 type Model struct {
 	width          int
-	assets         []*c.Asset
-	assetsBySymbol map[string]*c.Asset
+	assets         []*analysis.AnalyzedAsset // Changed
+	assetsBySymbol map[string]*analysis.AnalyzedAsset // Changed
 	sorter         s.Sorter
 	config         Config
 	cellWidths     row.CellWidthsContainer
@@ -35,18 +36,19 @@ type Model struct {
 }
 
 // Messages for replacing assets
-type SetAssetsMsg []c.Asset
+type SetAssetsMsg []analysis.AnalyzedAsset // Changed
 
 // Messages for updating assets
-type UpdateAssetsMsg []c.Asset
+// UpdateAssetsMsg []c.Asset // This type is not used in the provided code, SetAssetsMsg is used for full updates.
+// If individual updates were needed, this would also change.
 
 // NewModel returns a model with default values
 func NewModel(config Config) *Model {
 	return &Model{
 		width:          80,
 		config:         config,
-		assets:         make([]*c.Asset, 0),
-		assetsBySymbol: make(map[string]*c.Asset),
+		assets:         make([]*analysis.AnalyzedAsset, 0), // Changed
+		assetsBySymbol: make(map[string]*analysis.AnalyzedAsset), // Changed
 		sorter:         s.NewSorter(config.Sort),
 		rowsBySymbol:   make(map[string]*row.Model),
 	}
@@ -65,32 +67,34 @@ func (m *Model) Update(msg tea.Msg) (*Model, tea.Cmd) {
 		var cmd tea.Cmd
 		cmds := make([]tea.Cmd, 0)
 
-		// Convert []c.Asset to []*c.Asset and update assetsBySymbol map
-		assets := make([]*c.Asset, len(msg))
-		assetsBySymbol := make(map[string]*c.Asset)
+		// Convert []analysis.AnalyzedAsset to []*analysis.AnalyzedAsset and update assetsBySymbol map
+		assets := make([]*analysis.AnalyzedAsset, len(msg)) // Changed type
+		assetsBySymbol := make(map[string]*analysis.AnalyzedAsset) // Changed type
 
 		for i := range msg {
 			assets[i] = &msg[i]
-			assetsBySymbol[msg[i].Symbol] = assets[i]
+			assetsBySymbol[msg[i].BaseAsset.Symbol] = assets[i] // Changed to use BaseAsset.Symbol
 		}
 
 		assets = m.sorter(assets)
 
-		for i, asset := range assets {
+		for i, asset := range assets { // asset is now *analysis.AnalyzedAsset
 			if i < len(m.rows) {
+				// row.UpdateAssetMsg(asset) now takes *analysis.AnalyzedAsset
 				m.rows[i], cmd = m.rows[i].Update(row.UpdateAssetMsg(asset))
 				cmds = append(cmds, cmd)
-				m.rowsBySymbol[assets[i].Symbol] = m.rows[i]
+				m.rowsBySymbol[assets[i].BaseAsset.Symbol] = m.rows[i] // Changed to use BaseAsset.Symbol
 			} else {
+				// row.New now takes *analysis.AnalyzedAsset
 				m.rows = append(m.rows, row.New(row.Config{
 					Separate:              m.config.Separate,
 					ExtraInfoExchange:     m.config.ExtraInfoExchange,
 					ExtraInfoFundamentals: m.config.ExtraInfoFundamentals,
 					ShowHoldings:          m.config.ShowHoldings,
 					Styles:                m.config.Styles,
-					Asset:                 asset,
+					Asset:                 asset, // asset is *analysis.AnalyzedAsset
 				}))
-				m.rowsBySymbol[assets[i].Symbol] = m.rows[len(m.rows)-1]
+				m.rowsBySymbol[assets[i].BaseAsset.Symbol] = m.rows[len(m.rows)-1] // Changed to use BaseAsset.Symbol
 			}
 		}
 
@@ -158,21 +162,22 @@ func (m *Model) View() string {
 	return strings.Join(rows, "\n")
 
 }
-func getCellWidths(assets []*c.Asset) row.CellWidthsContainer {
+func getCellWidths(assets []*analysis.AnalyzedAsset) row.CellWidthsContainer { // Changed parameter type
 
 	cellMaxWidths := row.CellWidthsContainer{}
 
-	for _, asset := range assets {
+	for _, asset := range assets { // asset is now *analysis.AnalyzedAsset
 		var quoteLength int
 
-		volumeMarketCapLength := len(u.ConvertFloatToString(asset.QuoteExtended.MarketCap, true))
+		// Access fields via asset.BaseAsset
+		volumeMarketCapLength := len(u.ConvertFloatToString(asset.BaseAsset.QuoteExtended.MarketCap, true))
 
-		if asset.QuoteExtended.FiftyTwoWeekHigh == 0.0 {
-			quoteLength = len(u.ConvertFloatToString(asset.QuotePrice.Price, asset.Meta.IsVariablePrecision))
+		if asset.BaseAsset.QuoteExtended.FiftyTwoWeekHigh == 0.0 {
+			quoteLength = len(u.ConvertFloatToString(asset.BaseAsset.QuotePrice.Price, asset.BaseAsset.Meta.IsVariablePrecision))
 		}
 
-		if asset.QuoteExtended.FiftyTwoWeekHigh != 0.0 {
-			quoteLength = len(u.ConvertFloatToString(asset.QuoteExtended.FiftyTwoWeekHigh, asset.Meta.IsVariablePrecision))
+		if asset.BaseAsset.QuoteExtended.FiftyTwoWeekHigh != 0.0 {
+			quoteLength = len(u.ConvertFloatToString(asset.BaseAsset.QuoteExtended.FiftyTwoWeekHigh, asset.BaseAsset.Meta.IsVariablePrecision))
 		}
 
 		if volumeMarketCapLength > cellMaxWidths.WidthVolumeMarketCap {
@@ -186,9 +191,9 @@ func getCellWidths(assets []*c.Asset) row.CellWidthsContainer {
 			cellMaxWidths.WidthQuoteRange = row.WidthRangeStatic + (quoteLength * 2)
 		}
 
-		if asset.Holding != (c.Holding{}) {
-			positionLength := len(u.ConvertFloatToString(asset.Holding.Value, asset.Meta.IsVariablePrecision))
-			positionQuantityLength := len(u.ConvertFloatToString(asset.Holding.Quantity, asset.Meta.IsVariablePrecision))
+		if asset.BaseAsset.Holding != (c.Holding{}) {
+			positionLength := len(u.ConvertFloatToString(asset.BaseAsset.Holding.Value, asset.BaseAsset.Meta.IsVariablePrecision))
+			positionQuantityLength := len(u.ConvertFloatToString(asset.BaseAsset.Holding.Quantity, asset.BaseAsset.Meta.IsVariablePrecision))
 
 			if positionLength > cellMaxWidths.PositionLength {
 				cellMaxWidths.PositionLength = positionLength

@@ -2,10 +2,21 @@ package util
 
 import (
 	"math"
+	"math"
+	"regexp" // Added for StripRichTags
 	"strconv"
 
 	c "github.com/achannarasappa/ticker/v4/internal/common"
 )
+
+// StripRichTags removes Rich-like tags (e.g., [bold green], [/bold green]) from a string.
+// This regex is simplified and might not cover all complex Rich tag syntaxes,
+// but should handle common cases like [bold green] or [red].
+// It looks for an opening bracket, optionally a slash, any characters that are not ']', and then a closing bracket.
+func StripRichTags(input string) string {
+	re := regexp.MustCompile(`\[/?([a-zA-Z0-9_=\s-]+)\]`)
+	return re.ReplaceAllString(input, "")
+}
 
 func getPrecision(f float64) int {
 

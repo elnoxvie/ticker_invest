@@ -6,6 +6,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/achannarasappa/ticker/v4/internal/analysis" // Added
 	c "github.com/achannarasappa/ticker/v4/internal/common"
 	u "github.com/achannarasappa/ticker/v4/internal/ui/util"
 
@@ -49,10 +50,10 @@ type Config struct {
 	ExtraInfoExchange     bool
 	ExtraInfoFundamentals bool
 	Styles                c.Styles
-	Asset                 *c.Asset
+	Asset                 *analysis.AnalyzedAsset // Changed
 }
 
-type UpdateAssetMsg *c.Asset
+type UpdateAssetMsg *analysis.AnalyzedAsset // Changed
 
 type FrameMsg int
 
@@ -60,7 +61,7 @@ type FrameMsg int
 type Model struct {
 	id                   int
 	width                int
-	config               Config
+	config               Config // Config.Asset is now *analysis.AnalyzedAsset
 	cellWidths           CellWidthsContainer
 	frame                int
 	priceStyle           lipgloss.Style
@@ -70,7 +71,7 @@ type Model struct {
 }
 
 // New returns a model with default values
-func New(config Config) *Model {
+func New(config Config) *Model { // config.Asset is *analysis.AnalyzedAsset
 
 	var id int
 
@@ -83,8 +84,8 @@ func New(config Config) *Model {
 	return &Model{
 		id:                   id,
 		width:                80,
-		config:               config,
-		priceNoChangeSegment: u.ConvertFloatToString(config.Asset.QuotePrice.Price, config.Asset.Meta.IsVariablePrecision),
+		config:               config, // Store the config which has the AnalyzedAsset
+		priceNoChangeSegment: u.ConvertFloatToString(config.Asset.BaseAsset.QuotePrice.Price, config.Asset.BaseAsset.Meta.IsVariablePrecision), // Access via BaseAsset
 		priceChangeSegment:   "",
 	}
 }
@@ -103,20 +104,21 @@ func (m *Model) Update(msg tea.Msg) (*Model, tea.Cmd) {
 
 		return m, nil
 
-	case UpdateAssetMsg:
+	case UpdateAssetMsg: // msg is now *analysis.AnalyzedAsset
 
 		// If symbol has not changed and price has changed then start the price animation
-		if m.config.Asset.Symbol == msg.Symbol && m.config.Asset.QuotePrice.Price != msg.QuotePrice.Price {
+		// Access fields via BaseAsset
+		if m.config.Asset.BaseAsset.Symbol == msg.BaseAsset.Symbol && m.config.Asset.BaseAsset.QuotePrice.Price != msg.BaseAsset.QuotePrice.Price {
 			// Reset color and frame on number change
 			m.priceStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("15")).Background(lipgloss.Color(""))
 			m.frame = 0
 
-			oldPrice := u.ConvertFloatToString(m.config.Asset.QuotePrice.Price, m.config.Asset.Meta.IsVariablePrecision)
-			newPrice := u.ConvertFloatToString(msg.QuotePrice.Price, msg.Meta.IsVariablePrecision)
+			oldPrice := u.ConvertFloatToString(m.config.Asset.BaseAsset.QuotePrice.Price, m.config.Asset.BaseAsset.Meta.IsVariablePrecision)
+			newPrice := u.ConvertFloatToString(msg.BaseAsset.QuotePrice.Price, msg.BaseAsset.Meta.IsVariablePrecision)
 
-			if msg.QuotePrice.Price > m.config.Asset.QuotePrice.Price {
+			if msg.BaseAsset.QuotePrice.Price > m.config.Asset.BaseAsset.QuotePrice.Price {
 				m.priceChangeDirection = 1
-			} else if msg.QuotePrice.Price < m.config.Asset.QuotePrice.Price {
+			} else if msg.BaseAsset.QuotePrice.Price < m.config.Asset.BaseAsset.QuotePrice.Price {
 				m.priceChangeDirection = -1
 			}
 
@@ -139,15 +141,15 @@ func (m *Model) Update(msg tea.Msg) (*Model, tea.Cmd) {
 				m.priceChangeSegment = newPrice
 			}
 
-			m.config.Asset = msg
+			m.config.Asset = msg // msg is *analysis.AnalyzedAsset
 
 			return m, frameCmd(m.id)
 
 		}
 
 		// If symbol has changed or price has not changed then just update the asset
-		m.config.Asset = msg
-		m.priceNoChangeSegment = u.ConvertFloatToString(msg.QuotePrice.Price, msg.Meta.IsVariablePrecision)
+		m.config.Asset = msg // msg is *analysis.AnalyzedAsset
+		m.priceNoChangeSegment = u.ConvertFloatToString(msg.BaseAsset.QuotePrice.Price, msg.BaseAsset.Meta.IsVariablePrecision) // Access via BaseAsset
 		m.priceChangeSegment = ""
 
 		return m, nil
@@ -216,7 +218,8 @@ func (m *Model) View() string {
 			grid.Row{
 				Width: m.width,
 				Cells: []grid.Cell{
-					{Text: textTags(m.config.Asset, m.config.Styles)},
+					// textTags expects *c.Asset, so we pass m.config.Asset.BaseAsset
+					{Text: textTags(&m.config.Asset.BaseAsset, m.config.Styles)},
 				},
 			})
 	}
@@ -235,110 +238,136 @@ func (m *Model) View() string {
 	return grid.Render(grid.Grid{Rows: rows, GutterHorizontal: WidthGutter})
 }
 
-func (m *Model) buildCells() []grid.Cell {
+func (m *Model) buildCells() []grid.Cell { // m.config.Asset is *analysis.AnalyzedAsset
 
+	// Access base asset via m.config.Asset.BaseAsset
+	baseAsset := &m.config.Asset.BaseAsset
+	analysisData := m.config.Asset.Analysis // Store analysis data
+
+	// This slice will hold all cells that come *after* Name and MarketState
+	var cells []grid.Cell
+
+	// If not showing fundamentals AND not showing holdings, this is the most basic view
 	if !m.config.ExtraInfoFundamentals && !m.config.ShowHoldings {
-
-		return []grid.Cell{
-			{Text: textName(m.config.Asset, m.config.Styles)},
-			{Text: textMarketState(m.config.Asset, m.config.Styles), Width: WidthMarketState, Align: grid.Right},
-			{Text: textQuote(m.config.Asset, m.config.Styles, m.priceStyle, m.priceNoChangeSegment, m.priceChangeSegment), Width: m.cellWidths.WidthQuote, Align: grid.Right},
+		cells = []grid.Cell{
+			{Text: textQuote(baseAsset, m.config.Styles, m.priceStyle, m.priceNoChangeSegment, m.priceChangeSegment), Width: m.cellWidths.WidthQuote, Align: grid.Right},
+		}
+	} else {
+		// Build up cells for fundamentals and/or holdings.
+		// The original logic prepends, so we'll follow that pattern carefully.
+		// Start with the quote cell, as it's the rightmost of the financial data.
+		currentFinancialCells := []grid.Cell{
+			{Text: textQuote(baseAsset, m.config.Styles, m.priceStyle, m.priceNoChangeSegment, m.priceChangeSegment), Width: m.cellWidths.WidthQuote, Align: grid.Right},
 		}
 
+		if m.config.ShowHoldings {
+			holdingCells := []grid.Cell{
+				{
+					Text:  textPositionExtendedLabels(baseAsset, m.config.Styles),
+					Width: WidthLabel,
+					Align: grid.Right,
+				},
+				{
+					Text:  textPositionExtended(baseAsset, m.config.Styles),
+					Width: m.cellWidths.WidthPositionExtended,
+					Align: grid.Right,
+				},
+				{
+					Text:  textPosition(baseAsset, m.config.Styles),
+					Width: m.cellWidths.WidthPosition,
+					Align: grid.Right,
+				},
+			}
+			currentFinancialCells = append(holdingCells, currentFinancialCells...)
+		}
+
+		if m.config.ExtraInfoFundamentals {
+			fundamentalCells := []grid.Cell{
+				{
+					Text:  textVolumeMarketCapLabels(baseAsset, m.config.Styles),
+					Width: WidthLabel,
+					Align: grid.Right,
+				},
+				{
+					Text:  textVolumeMarketCap(baseAsset),
+					Width: m.cellWidths.WidthVolumeMarketCap,
+					Align: grid.Right,
+				},
+				{
+					Text:  textQuoteRangeLabels(baseAsset, m.config.Styles),
+					Width: WidthLabel,
+					Align: grid.Right,
+				},
+				{
+					Text:  textQuoteRange(baseAsset, m.config.Styles),
+					Width: m.cellWidths.WidthQuoteRange,
+					Align: grid.Right,
+				},
+				{
+					Text:  textQuoteExtendedLabels(baseAsset, m.config.Styles),
+					Width: WidthLabel,
+					Align: grid.Right,
+				},
+				{
+					Text:  textQuoteExtended(baseAsset, m.config.Styles),
+					Width: m.cellWidths.WidthQuoteExtended,
+					Align: grid.Right,
+				},
+			}
+			currentFinancialCells = append(fundamentalCells, currentFinancialCells...)
+		}
+		cells = currentFinancialCells
 	}
 
-	cellName := []grid.Cell{
-		{Text: textName(m.config.Asset, m.config.Styles), Width: WidthName},
-		{Text: ""},
-		{Text: textMarketState(m.config.Asset, m.config.Styles), Width: WidthMarketState, Align: grid.Right},
+
+	// Append Analysis Decision and Trend Status cells to the financial data
+	analysisDecisionText := textAnalysisDecision(analysisData, m.config.Styles)
+	if analysisDecisionText != "" {
+		cells = append(cells, grid.Cell{Text: analysisDecisionText, Align: grid.Left})
 	}
 
-	cells := []grid.Cell{
-		{Text: textQuote(m.config.Asset, m.config.Styles, m.priceStyle, m.priceNoChangeSegment, m.priceChangeSegment), Width: m.cellWidths.WidthQuote, Align: grid.Right},
+	analysisTrendStatusText := textAnalysisTrendStatus(analysisData, m.config.Styles)
+	if analysisTrendStatusText != "" {
+		cells = append(cells, grid.Cell{Text: analysisTrendStatusText, Align: grid.Left})
 	}
-	widthMinTerm := WidthName + WidthMarketState + m.cellWidths.WidthQuote + (3 * WidthGutter)
-
-	if m.config.ShowHoldings {
-		widthHoldings := widthMinTerm + m.cellWidths.WidthPosition + (3 * WidthGutter) + m.cellWidths.WidthPositionExtended + WidthLabel
-
-		cells = append(
-			[]grid.Cell{
-				{
-					Text:            textPositionExtendedLabels(m.config.Asset, m.config.Styles),
-					Width:           WidthLabel,
-					Align:           grid.Right,
-					VisibleMinWidth: widthHoldings,
-				},
-				{
-					Text:            textPositionExtended(m.config.Asset, m.config.Styles),
-					Width:           m.cellWidths.WidthPositionExtended,
-					Align:           grid.Right,
-					VisibleMinWidth: widthMinTerm + m.cellWidths.WidthPosition + (2 * WidthGutter) + m.cellWidths.WidthPositionExtended,
-				},
-				{
-					Text:            textPosition(m.config.Asset, m.config.Styles),
-					Width:           m.cellWidths.WidthPosition,
-					Align:           grid.Right,
-					VisibleMinWidth: widthMinTerm + m.cellWidths.WidthPosition + WidthGutter,
-				},
-			},
-			cells...,
-		)
-		widthMinTerm = widthHoldings
+	
+	// Initial Name and Market State cells
+	nameAndMarketStateCells := []grid.Cell{
+		{Text: textName(baseAsset, m.config.Styles), Width: WidthName},
+		{Text: ""}, // Gutter
+		{Text: textMarketState(baseAsset, m.config.Styles), Width: WidthMarketState, Align: grid.Right},
 	}
 
-	if m.config.ExtraInfoFundamentals {
-		cells = append(
-			[]grid.Cell{
-				{
-					Text:            textVolumeMarketCapLabels(m.config.Asset, m.config.Styles),
-					Width:           WidthLabel,
-					Align:           grid.Right,
-					VisibleMinWidth: widthMinTerm + m.cellWidths.WidthQuoteExtended + (6 * WidthGutter) + (3 * WidthLabel) + m.cellWidths.WidthQuoteRange + m.cellWidths.WidthVolumeMarketCap,
-				},
-				{
-					Text:            textVolumeMarketCap(m.config.Asset),
-					Width:           m.cellWidths.WidthVolumeMarketCap,
-					Align:           grid.Right,
-					VisibleMinWidth: widthMinTerm + m.cellWidths.WidthQuoteExtended + (5 * WidthGutter) + (2 * WidthLabel) + m.cellWidths.WidthQuoteRange + m.cellWidths.WidthVolumeMarketCap,
-				},
-				{
-					Text:            textQuoteRangeLabels(m.config.Asset, m.config.Styles),
-					Width:           WidthLabel,
-					Align:           grid.Right,
-					VisibleMinWidth: widthMinTerm + m.cellWidths.WidthQuoteExtended + (4 * WidthGutter) + (2 * WidthLabel) + m.cellWidths.WidthQuoteRange,
-				},
-				{
-					Text:            textQuoteRange(m.config.Asset, m.config.Styles),
-					Width:           m.cellWidths.WidthQuoteRange,
-					Align:           grid.Right,
-					VisibleMinWidth: widthMinTerm + m.cellWidths.WidthQuoteExtended + (3 * WidthGutter) + WidthLabel + m.cellWidths.WidthQuoteRange,
-				},
-				{
-					Text:            textQuoteExtendedLabels(m.config.Asset, m.config.Styles),
-					Width:           WidthLabel,
-					Align:           grid.Right,
-					VisibleMinWidth: widthMinTerm + m.cellWidths.WidthQuoteExtended + (2 * WidthGutter) + WidthLabel,
-				},
-				{
-					Text:            textQuoteExtended(m.config.Asset, m.config.Styles),
-					Width:           m.cellWidths.WidthQuoteExtended,
-					Align:           grid.Right,
-					VisibleMinWidth: widthMinTerm + m.cellWidths.WidthQuoteExtended + WidthGutter,
-				},
-			},
-			cells...,
-		)
-	}
+	// Prepend Name and Market State cells to the beginning of all other cells
+	finalCells := append(nameAndMarketStateCells, cells...)
 
-	cells = append(
-		cellName,
-		cells...,
-	)
-
-	return cells
-
+	return finalCells
 }
+
+// textName, textQuote, textPosition, etc. now receive *c.Asset
+// These helper functions remain unchanged in their signature as they operate on *c.Asset.
+// The caller (buildCells) is responsible for passing the correct part of AnalyzedAsset.
+
+// Helper function for Analysis Decision
+func textAnalysisDecision(analysisResult analysis.AnalysisResults, styles c.Styles) string {
+	if analysisResult.Decision == "" {
+		return "" // Or "N/A" if preferred: return styles.TextLabel("N/A")
+	}
+	strippedDecision := u.StripRichTags(analysisResult.Decision)
+	return styles.Text(strippedDecision) // styles.Text should handle plain text fine
+}
+
+// Helper function for Analysis Trend Status
+func textAnalysisTrendStatus(analysisResult analysis.AnalysisResults, styles c.Styles) string {
+	if analysisResult.TrendStatus == "" {
+		return "" // Or "N/A": return styles.TextLabel("N/A")
+	}
+	strippedTrendStatus := u.StripRichTags(analysisResult.TrendStatus)
+	return styles.Text(strippedTrendStatus) // styles.Text should handle plain text fine
+}
+
+func textName(asset *c.Asset, styles c.Styles) string {
+// The caller (buildCells) is responsible for passing the correct part of AnalyzedAsset.
 
 func textName(asset *c.Asset, styles c.Styles) string {
 
@@ -498,7 +527,7 @@ func textQuoteRangeLabels(asset *c.Asset, styles c.Styles) string {
 	return ""
 }
 
-func textVolumeMarketCap(asset *c.Asset) string {
+func textVolumeMarketCap(asset *c.Asset) string { // No styles needed here as per original
 
 	if asset.Class == c.AssetClassFuturesContract {
 		return u.ConvertFloatToString(asset.QuoteFutures.OpenInterest, true) +

@@ -30,6 +30,7 @@ type Monitor struct {
 	logger                  *log.Logger
 	ctx                     context.Context
 	cancel                  context.CancelFunc
+	UnaryAPIYahoo           *unaryClientYahoo.UnaryAPI // Added field
 }
 
 // ConfigMonitor represents the configuration for the main monitor
@@ -128,6 +129,7 @@ func NewMonitor(configMonitor ConfigMonitor) (*Monitor, error) {
 		logger:                  configMonitor.Logger,
 		ctx:                     ctx,
 		cancel:                  cancel,
+		UnaryAPIYahoo:           unaryAPI, // Assigned to the new field
 	}
 
 	return m, nil

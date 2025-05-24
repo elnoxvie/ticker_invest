@@ -61,7 +61,7 @@ type currencyRateByUse struct {
 //   - A currencyRateByUse struct populated with the determined rates for different use cases
 //     and the effective target currency code.
 func getCurrencyRateByUse(ctx c.Context, fromCurrency, toCurrencyActual string, rate float64) currencyRateByUse {
-	targetDisplayCurrency := strings.ToUpper(ctx.Config.DisplayCurrency)
+	targetDisplayCurrency := strings.ToUpper(ctx.Config.Currency)
 	fromCurrency = strings.ToUpper(fromCurrency)
 
 	finalRate := 1.0
@@ -72,13 +72,14 @@ func getCurrencyRateByUse(ctx c.Context, fromCurrency, toCurrencyActual string, 
 			finalRate = rate
 			effectiveToCurrency = targetDisplayCurrency
 		} else {
-			if cr, ok := ctx.CurrencyRates[fromCurrency]; ok && cr.ToCurrency == targetDisplayCurrency {
-				finalRate = cr.Rate
-				effectiveToCurrency = targetDisplayCurrency
-			} else {
-				finalRate = 1.0
-				effectiveToCurrency = fromCurrency
-			}
+			// TODO: Resolve how CurrencyRates should be accessed or passed to this function.
+			// if cr, ok := ctx.CurrencyRates[fromCurrency]; ok && cr.ToCurrency == targetDisplayCurrency {
+			// 	finalRate = cr.Rate
+			// 	effectiveToCurrency = targetDisplayCurrency
+			// } else {
+			// 	finalRate = 1.0
+			// 	effectiveToCurrency = fromCurrency
+			// }
 		}
 	} else {
 		effectiveToCurrency = targetDisplayCurrency
@@ -107,10 +108,10 @@ func getCurrencyRateByUse(ctx c.Context, fromCurrency, toCurrencyActual string, 
 func convertAssetQuotePriceCurrency(rates currencyRateByUse, qp c.QuotePrice) c.QuotePrice {
 	qp.Price *= rates.QuotePrice
 	qp.Change *= rates.QuotePrice
-	qp.High *= rates.QuotePrice
-	qp.Low *= rates.QuotePrice
-	qp.Open *= rates.QuotePrice
-	qp.PreviousClose *= rates.QuotePrice
+	qp.PriceDayHigh *= rates.QuotePrice
+	qp.PriceDayLow *= rates.QuotePrice
+	qp.PriceOpen *= rates.QuotePrice
+	qp.PricePrevClose *= rates.QuotePrice
 	return qp
 }
 

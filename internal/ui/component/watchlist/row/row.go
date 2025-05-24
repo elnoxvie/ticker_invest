@@ -366,7 +366,6 @@ func textAnalysisTrendStatus(analysisResult analysis.AnalysisResults, styles c.S
 	return styles.Text(strippedTrendStatus) // styles.Text should handle plain text fine
 }
 
-func textName(asset *c.Asset, styles c.Styles) string {
 // The caller (buildCells) is responsible for passing the correct part of AnalyzedAsset.
 
 func textName(asset *c.Asset, styles c.Styles) string {

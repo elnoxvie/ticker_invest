@@ -6,10 +6,8 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
-	"time"
 
 	c "github.com/achannarasappa/ticker/v4/internal/common"
-	"github.com/achannarasappa/ticker/v4/internal/indicator"
 )
 
 // UnaryAPI is a client for the API

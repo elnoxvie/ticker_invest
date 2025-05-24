@@ -2,7 +2,6 @@ package util
 
 import (
 	"math"
-	"math"
 	"regexp" // Added for StripRichTags
 	"strconv"
 

@@ -58,10 +58,6 @@ func GetConsolidatedDecision(
 	resBuffer := atrVal * atrMultiplierBuf
 
 	// --- MACD Conditions ---
-	macdBullishCross := false
-	if last.MACDHist != nil && prev.MACDHist != nil && *last.MACDHist > 0 && *prev.MACDHist <= 0 {
-		macdBullishCross = true
-	}
 	// macd_bearish_cross (unused in Python decision tree for now, but for completeness if needed later)
 	// if last.MACDHist != nil && prev.MACDHist != nil && *last.MACDHist < 0 && *prev.MACDHist >= 0 {
 	// 	 macd_bearish_cross = true

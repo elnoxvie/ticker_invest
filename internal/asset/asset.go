@@ -4,14 +4,19 @@
 package asset
 
 import (
+	"bytes"
+	"encoding/json"
+	"fmt"
+	"net/http"
 	"strings"
-	"time" // For historical data defaults
+	"time" // Added for http.Client timeout
 
-	"github.com/achannarasappa/ticker/v4/internal/analysis" // For AnalysisResults, AnalyzedAsset, and analysis functions
+	"github.com/achannarasappa/ticker/v4/internal/analysis"
 	c "github.com/achannarasappa/ticker/v4/internal/common"
-	"github.com/achannarasappa/ticker/v4/internal/indicator"
-	"github.com/achannarasappa/ticker/v4/internal/monitor/yahoo/historical" // For FetchAndProcessHistoricalData
-	"github.com/achannarasappa/ticker/v4/internal/monitor/yahoo/unary"      // For UnaryAPI type
+	"github.com/achannarasappa/ticker/v4/internal/indicator" // For indicator.HistoricalPoint
+	"github.com/achannarasappa/ticker/v4/internal/monitor/yahoo/historical"
+	"github.com/achannarasappa/ticker/v4/internal/monitor/yahoo/unary"
+	u "github.com/achannarasappa/ticker/v4/internal/ui/util" // For StripRichTags
 )
 
 // AggregatedLot represents a cost basis lot of an asset grouped by symbol.
@@ -136,20 +141,21 @@ func convertAssetQuoteExtendedCurrency(rates currencyRateByUse, qe c.QuoteExtend
 // and returns a slice of fully analyzed assets along with a summary of holdings.
 //
 // The process for each asset involves:
-// 1. Initializing a base asset structure from the provided quote.
-// 2. Applying currency conversions to financial data based on the application's display currency.
-// 3. Fetching historical market data for the asset using the provided `unaryAPI` client.
-//    Historical data range and interval are determined by application configuration with defaults.
-// 4. If historical data is successfully retrieved:
-//    a. Calculating various technical indicators (SMA, EMA, RSI, MACD, ATR) based on configured periods.
-//    b. Populating these indicators back into the historical data points.
-//    c. Performing higher-level analysis:
-//       i. Determining trend and volume status.
-//       ii. Calculating support and resistance levels.
-//       iii. Generating a consolidated trading decision based on all gathered data and analysis.
-// 5. Consolidating all information into an `analysis.AnalyzedAsset` struct.
-// 6. Aggregating holding summaries (total value, cost, changes).
-// 7. Calculating holding weights for each asset relative to the total portfolio value.
+//  1. Initializing a base asset structure from the provided quote.
+//  2. Applying currency conversions to financial data based on the application's display currency.
+//  3. Fetching historical market data for the asset using the provided `unaryAPI` client.
+//     Historical data range and interval are determined by application configuration with defaults.
+//  4. If historical data is successfully retrieved:
+//     a. Calculating various technical indicators (SMA, EMA, RSI, MACD, ATR) based on configured periods.
+//     b. Populating these indicators back into the historical data points.
+//     c. Performing higher-level analysis:
+//     i. Determining trend and volume status.
+//     ii. Calculating support and resistance levels.
+//     iii. Generating a consolidated trading decision based on all gathered data and analysis.
+//  5. Consolidating all information into an `analysis.AnalyzedAsset` struct.
+//  6. Aggregating holding summaries (total value, cost, changes).
+//  7. Calculating holding weights for each asset relative to the total portfolio value.
+//  8. Fetching AI-generated summaries for the decision and trend.
 //
 // Parameters:
 //   - ctx: The application context, containing configuration (e.g., display currency, analysis parameters)
@@ -164,6 +170,169 @@ func convertAssetQuoteExtendedCurrency(rates currencyRateByUse, qe c.QuoteExtend
 //     trading decision.
 //   - A `HoldingSummary` struct, providing an aggregated view of all holdings processed, including
 //     total market value, cost basis, and overall day/total changes.
+
+// AIAPIRequest defines the structure for the request to the AI completions endpoint.
+type AIAPIRequest struct {
+	Model       string  `json:"model"`
+	Prompt      string  `json:"prompt"`
+	MaxTokens   int     `json:"max_tokens"`
+	Temperature float64 `json:"temperature"`
+}
+
+// AIAPIResponseChoice defines a single choice in the AI API response.
+type AIAPIResponseChoice struct {
+	Text string `json:"text"`
+}
+
+// AIAPIResponse defines the structure for the response from the AI completions endpoint.
+type AIAPIResponse struct {
+	Choices []AIAPIResponseChoice `json:"choices"`
+}
+
+// getAISummary calls the local AI API to get a summary for a given prompt.
+func getAISummary(ctx c.Context, httpClient *http.Client, prompt string) string { // Removed logger, will use ctx.Logger; Added ctx
+
+	// Check if AI is enabled in the config
+	if ctx.Config.AIAPI.Enabled != nil && !*ctx.Config.AIAPI.Enabled {
+		if ctx.Logger != nil {
+			ctx.Logger.Printf("AI queries are disabled in the configuration.")
+		}
+		return "" // Return empty if AI is explicitly disabled
+	}
+	// If Enabled is nil (not set in YAML), also treat as disabled by default.
+	if ctx.Config.AIAPI.Enabled == nil {
+		if ctx.Logger != nil {
+			ctx.Logger.Printf("AI queries are disabled by default (ai_api.enabled not set in config).")
+		}
+		return "" // Return empty if AI is not explicitly enabled
+	}
+
+	// Use configured AI API settings, with defaults
+	endpoint := ctx.Config.AIAPI.Endpoint
+	if endpoint == "" {
+		endpoint = "http://10.5.0.2:1234/v1/completions" // Default endpoint
+	}
+	modelName := ctx.Config.AIAPI.ModelName
+	if modelName == "" {
+		modelName = "local-model" // Default model name
+	}
+	maxTokens := ctx.Config.AIAPI.MaxTokens
+	if maxTokens == 0 {
+		maxTokens = 150 // Default max tokens
+	}
+	temperature := ctx.Config.AIAPI.Temperature
+	// Default temperature is 0.7, allow 0 as a valid value if explicitly set.
+	// So, we only apply default if it's not present in a way that implies zero was intended.
+	// However, typical YAML unmarshalling would set it to 0 if omitted and it's a float64.
+	// For simplicity, if it's 0.0 and not explicitly set, we might assume default.
+	// A better way would be to use pointers in AIConfig for optional values or check if the key exists.
+	// For now, we'll assume if it's 0, use default, unless we enhance AIConfig to differentiate.
+	if temperature == 0.0 { // Assuming 0.0 means use default, adjust if 0 is a valid non-default T.
+		temperature = 0.7 // Default temperature
+	}
+
+	requestPayload := AIAPIRequest{
+		Model:       modelName,
+		Prompt:      prompt,
+		MaxTokens:   maxTokens,
+		Temperature: temperature,
+	}
+
+	payloadBytes, err := json.Marshal(requestPayload)
+	if err != nil {
+		if ctx.Logger != nil {
+			ctx.Logger.Printf("Error marshalling AI API request: %v", err)
+		}
+		return ""
+	}
+
+	req, err := http.NewRequest("POST", endpoint, bytes.NewBuffer(payloadBytes))
+	if err != nil {
+		if ctx.Logger != nil {
+			ctx.Logger.Printf("Error creating AI API request: %v", err)
+		}
+		return ""
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		if ctx.Logger != nil {
+			ctx.Logger.Printf("Error sending AI API request: %v", err)
+		}
+		return ""
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		if ctx.Logger != nil {
+			ctx.Logger.Printf("AI API request failed with status %s", resp.Status)
+		}
+		return ""
+	}
+
+	var apiResponse AIAPIResponse
+	if err := json.NewDecoder(resp.Body).Decode(&apiResponse); err != nil {
+		if ctx.Logger != nil {
+			ctx.Logger.Printf("Error decoding AI API response: %v", err)
+		}
+		return ""
+	}
+
+	// print the AI API response for debugging
+	if ctx.Logger != nil {
+		ctx.Logger.Printf("AI API response: %+v", apiResponse)
+	}
+
+	if len(apiResponse.Choices) > 0 && apiResponse.Choices[0].Text != "" {
+		responseText := apiResponse.Choices[0].Text
+		// Attempt to remove the original prompt if the response starts with it.
+		// Also trim any leading/trailing whitespace from the result.
+		cleanedText := strings.TrimSpace(strings.TrimPrefix(responseText, prompt))
+		return cleanedText
+	}
+
+	if ctx.Logger != nil {
+		ctx.Logger.Printf("No summary found in AI API response or choices array empty")
+	}
+	return ""
+}
+
+// buildAIPrompt constructs a detailed prompt for the AI API.
+func buildAIPrompt(symbol, analysisType, decisionOrTrend string, price float64, indicators *indicator.HistoricalDataPoint, support, resistance *float64, volume float64) string { // Changed indicator.HistoricalPoint to indicator.HistoricalDataPoint
+	var promptBuilder strings.Builder
+	promptBuilder.WriteString(fmt.Sprintf("Explain why the %s for stock symbol %s is %s. ", analysisType, symbol, decisionOrTrend))
+	promptBuilder.WriteString("Consider the following technical indicators: ")
+	promptBuilder.WriteString(fmt.Sprintf("Current Price: %.2f. ", price))
+
+	if indicators != nil {
+		if indicators.SMA50 != nil {
+			promptBuilder.WriteString(fmt.Sprintf("SMA50: %.2f. ", *indicators.SMA50))
+		}
+		if indicators.SMA200 != nil {
+			promptBuilder.WriteString(fmt.Sprintf("SMA200: %.2f. ", *indicators.SMA200))
+		}
+		if indicators.RSI != nil {
+			promptBuilder.WriteString(fmt.Sprintf("RSI: %.2f. ", *indicators.RSI))
+		}
+		if indicators.MACD != nil {
+			promptBuilder.WriteString(fmt.Sprintf("MACD: %.2f. ", *indicators.MACD))
+		}
+		// Add other indicators as needed, e.g., ATR, MACDSignal, MACDHist
+	}
+	if support != nil {
+		promptBuilder.WriteString(fmt.Sprintf("Support: %.2f. ", *support))
+	}
+	if resistance != nil {
+		promptBuilder.WriteString(fmt.Sprintf("Resistance: %.2f. ", *resistance))
+	}
+	if volume != 0 { // Assuming QuoteExtended.Volume is the relevant volume
+		promptBuilder.WriteString(fmt.Sprintf("Volume: %.0f. ", volume))
+	}
+	promptBuilder.WriteString("Provide a concise summary in less than 5 lines.")
+	return promptBuilder.String()
+}
+
 func GetAnalyzedAssets(
 	ctx c.Context,
 	assetGroupQuote c.AssetGroupQuote,
@@ -263,6 +432,17 @@ func GetAnalyzedAssets(
 		analysisRes := analysis.AnalysisResults{Decision: "N/A (Analysis Pending)"}
 		histData, err := historical.FetchAndProcessHistoricalData(unaryAPI, assetQuote.Symbol, confHistDataRange, confHistDataInterval)
 
+		// Initialize HTTP client for AI API calls
+		// It's generally better to initialize this once and reuse, but for simplicity here,
+		// we create it per asset or it could be passed into GetAnalyzedAssets.
+		// For production, consider a shared client.
+		aiClient := &http.Client{}
+		if ctx.Config.AIAPI.RequestTimeoutSeconds > 0 {
+			aiClient.Timeout = time.Duration(ctx.Config.AIAPI.RequestTimeoutSeconds) * time.Second
+		} else {
+			aiClient.Timeout = 10 * time.Second // Default timeout
+		}
+
 		if err == nil && len(histData) > 0 {
 			sma50Values := indicator.CalculateSMA(histData, confSma50Period)
 			sma200Values := indicator.CalculateSMA(histData, confSma200Period)
@@ -271,13 +451,27 @@ func GetAnalyzedAssets(
 			atrValues := indicator.CalculateATR(histData, confAtrPeriod)
 
 			for i := range histData {
-				if i < len(sma50Values) {	histData[i].SMA50 = sma50Values[i] }
-				if i < len(sma200Values) { histData[i].SMA200 = sma200Values[i] }
-				if i < len(rsiValues) { histData[i].RSI = rsiValues[i] }
-				if i < len(macdLine) { histData[i].MACD = macdLine[i] }
-				if i < len(macdSignal) { histData[i].MACDSignal = macdSignal[i] }
-				if i < len(macdHist) { histData[i].MACDHist = macdHist[i] }
-				if i < len(atrValues) { histData[i].ATR = atrValues[i] }
+				if i < len(sma50Values) {
+					histData[i].SMA50 = sma50Values[i]
+				}
+				if i < len(sma200Values) {
+					histData[i].SMA200 = sma200Values[i]
+				}
+				if i < len(rsiValues) {
+					histData[i].RSI = rsiValues[i]
+				}
+				if i < len(macdLine) {
+					histData[i].MACD = macdLine[i]
+				}
+				if i < len(macdSignal) {
+					histData[i].MACDSignal = macdSignal[i]
+				}
+				if i < len(macdHist) {
+					histData[i].MACDHist = macdHist[i]
+				}
+				if i < len(atrValues) {
+					histData[i].ATR = atrValues[i]
+				}
 			}
 
 			// This is the main success path: err == nil && len(histData) > 0
@@ -317,6 +511,43 @@ func GetAnalyzedAssets(
 				analysisRes.Support = srOutput.Support
 				analysisRes.Resistance = srOutput.Resistance
 				analysisRes.Decision = analysis.GetConsolidatedDecision(histData, srOutput, tvOutput, confAtrMultiplier)
+
+				// Fetch AI Summaries after core analysis is complete
+				// Only fetch if AI is enabled
+				if ctx.Config.AIAPI.Enabled != nil && *ctx.Config.AIAPI.Enabled {
+					if analysisRes.Decision != "" && !strings.Contains(analysisRes.Decision, "N/A") {
+						decisionPrompt := buildAIPrompt(
+							baseAsset.Symbol,
+							"investment decision",
+							u.StripRichTags(analysisRes.Decision),
+							baseAsset.QuotePrice.Price,
+							analysisRes.LastHistoricalPointWithIndicators,
+							analysisRes.Support,
+							analysisRes.Resistance,
+							baseAsset.QuoteExtended.Volume,
+						)
+						analysisRes.DecisionSummary = getAISummary(ctx, aiClient, decisionPrompt) // Pass ctx
+					}
+
+					if analysisRes.TrendStatus != "" && !strings.Contains(analysisRes.TrendStatus, "N/A") {
+						trendPrompt := buildAIPrompt(
+							baseAsset.Symbol,
+							"current trend",
+							u.StripRichTags(analysisRes.TrendStatus),
+							baseAsset.QuotePrice.Price,
+							analysisRes.LastHistoricalPointWithIndicators,
+							analysisRes.Support,
+							analysisRes.Resistance,
+							baseAsset.QuoteExtended.Volume,
+						)
+						analysisRes.TrendSummary = getAISummary(ctx, aiClient, trendPrompt) // Pass ctx
+					}
+				} else {
+					if ctx.Logger != nil {
+						ctx.Logger.Printf("Skipping AI summary generation as AI is disabled.")
+					}
+				}
+
 			} else {
 				analysisRes.Decision = "N/A (Insufficient Hist. Data for Analysis)"
 			}
@@ -384,7 +615,7 @@ func getHoldingFromAssetQuote(assetQuote c.AssetQuote, lotsBySymbol map[string]A
 	if aggregatedLot, ok := lotsBySymbol[assetQuote.Symbol]; ok {
 		valueDisplay := aggregatedLot.Quantity * assetQuote.QuotePrice.Price
 		costDisplay := aggregatedLot.Cost * currencyRateByUseVals.PositionCost
-		
+
 		totalChangeAmountDisplay := valueDisplay - costDisplay
 		var totalChangePercent float64
 		if costDisplay != 0 {
@@ -392,15 +623,15 @@ func getHoldingFromAssetQuote(assetQuote c.AssetQuote, lotsBySymbol map[string]A
 		}
 
 		dayChangeAmountDisplay := assetQuote.QuotePrice.Change * aggregatedLot.Quantity
-        
-        unitValueDisplay := 0.0
-        if aggregatedLot.Quantity != 0 {
-            unitValueDisplay = valueDisplay / aggregatedLot.Quantity
-        }
-        unitCostDisplay := 0.0
-        if aggregatedLot.Quantity != 0 {
-            unitCostDisplay = costDisplay / aggregatedLot.Quantity
-        }
+
+		unitValueDisplay := 0.0
+		if aggregatedLot.Quantity != 0 {
+			unitValueDisplay = valueDisplay / aggregatedLot.Quantity
+		}
+		unitCostDisplay := 0.0
+		if aggregatedLot.Quantity != 0 {
+			unitCostDisplay = costDisplay / aggregatedLot.Quantity
+		}
 
 		return c.Holding{
 			Value:     valueDisplay,

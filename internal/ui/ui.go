@@ -76,20 +76,21 @@ func NewModel(dep c.Dependencies, ctx c.Context, monitors *mon.Monitor) *Model {
 	groupMaxIndex := len(ctx.Groups) - 1
 
 	return &Model{
-		ctx:                ctx,
-		headerHeight:       getVerticalMargin(ctx.Config),
-		ready:              false,
-		requestInterval:    ctx.Config.RefreshInterval,
-		versionVector:      0,
-		analyzedAssets:     make([]analysis.AnalyzedAsset, 0), // Changed initialization
-		assetQuotes:        make([]c.AssetQuote, 0),           // Retained
-		assetQuotesLookup:  make(map[string]int),
-		holdingSummary:     asset.HoldingSummary{},
-		unaryAPIClient:     monitors.UnaryAPIYahoo, // Assigned
+		ctx:               ctx,
+		headerHeight:      getVerticalMargin(ctx.Config),
+		ready:             false,
+		requestInterval:   ctx.Config.RefreshInterval,
+		versionVector:     0,
+		analyzedAssets:    make([]analysis.AnalyzedAsset, 0), // Changed initialization
+		assetQuotes:       make([]c.AssetQuote, 0),           // Retained
+		assetQuotesLookup: make(map[string]int),
+		holdingSummary:    asset.HoldingSummary{},
+		unaryAPIClient:    monitors.UnaryAPIYahoo, // Assigned
 		watchlist: watchlist.NewModel(watchlist.Config{
 			Sort:                  ctx.Config.Sort,
 			Separate:              ctx.Config.Separate,
 			ShowHoldings:          ctx.Config.ShowHoldings,
+			ShowAnalysis:          ctx.Config.ShowAnalysis, // Added
 			ExtraInfoExchange:     ctx.Config.ExtraInfoExchange,
 			ExtraInfoFundamentals: ctx.Config.ExtraInfoFundamentals,
 			Styles:                ctx.Reference.Styles,

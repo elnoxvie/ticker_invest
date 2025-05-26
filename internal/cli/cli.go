@@ -28,6 +28,7 @@ type Options struct {
 	ExtraInfoExchange     bool
 	ExtraInfoFundamentals bool
 	ShowSummary           bool
+	ShowAnalysis          bool
 	ShowHoldings          bool
 	Sort                  string
 }
@@ -178,6 +179,7 @@ func GetConfig(dep c.Dependencies, configPath string, options Options) (c.Config
 	config.ExtraInfoFundamentals = getBoolOption(options.ExtraInfoFundamentals, config.ExtraInfoFundamentals)
 	config.ShowSummary = getBoolOption(options.ShowSummary, config.ShowSummary)
 	config.ShowHoldings = getBoolOption(options.ShowHoldings, config.ShowHoldings)
+	config.ShowAnalysis = getBoolOption(options.ShowAnalysis, config.ShowAnalysis)
 	config.Sort = getStringOption(options.Sort, config.Sort)
 
 	return config, nil

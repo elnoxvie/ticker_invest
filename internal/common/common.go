@@ -24,6 +24,7 @@ type Config struct {
 	ExtraInfoFundamentals             bool               `yaml:"show-fundamentals"`
 	ShowSummary                       bool               `yaml:"show-summary"`
 	ShowHoldings                      bool               `yaml:"show-holdings"`
+	ShowAnalysis                      bool               `yaml:"show-analysis"`
 	Sort                              string             `yaml:"sort"`
 	Currency                          string             `yaml:"currency"`
 	CurrencyConvertSummaryOnly        bool               `yaml:"currency-summary-only"`
@@ -33,18 +34,30 @@ type Config struct {
 	Debug                             bool               `yaml:"debug"`
 
 	// New Analysis and Data Configuration Fields
-	AnalysisLookbackSRDays    int     `yaml:"analysis_lookback_sr_days,omitempty"`
-	AnalysisAtrPeriod         int     `yaml:"analysis_atr_period,omitempty"`
-	AnalysisAtrMultiplier   float64 `yaml:"analysis_atr_multiplier,omitempty"`
-	AnalysisVolumeSurge     float64 `yaml:"analysis_volume_surge_multiplier,omitempty"`
-	AnalysisSma50Period       int     `yaml:"analysis_sma50_period,omitempty"`
-	AnalysisSma200Period      int     `yaml:"analysis_sma200_period,omitempty"`
-	AnalysisRsiPeriod         int     `yaml:"analysis_rsi_period,omitempty"`
-	AnalysisMacdFastPeriod    int     `yaml:"analysis_macd_fast_period,omitempty"`
-	AnalysisMacdSlowPeriod    int     `yaml:"analysis_macd_slow_period,omitempty"`
-	AnalysisMacdSignalPeriod  int     `yaml:"analysis_macd_signal_period,omitempty"`
-	HistoricalDataRange       string  `yaml:"historical_data_range,omitempty"`   // e.g., "1y", "2y"
-	HistoricalDataInterval    string  `yaml:"historical_data_interval,omitempty"`// e.g., "1d", "1wk"
+	AnalysisLookbackSRDays   int     `yaml:"analysis_lookback_sr_days,omitempty"`
+	AnalysisAtrPeriod        int     `yaml:"analysis_atr_period,omitempty"`
+	AnalysisAtrMultiplier    float64 `yaml:"analysis_atr_multiplier,omitempty"`
+	AnalysisVolumeSurge      float64 `yaml:"analysis_volume_surge_multiplier,omitempty"`
+	AnalysisSma50Period      int     `yaml:"analysis_sma50_period,omitempty"`
+	AnalysisSma200Period     int     `yaml:"analysis_sma200_period,omitempty"`
+	AnalysisRsiPeriod        int     `yaml:"analysis_rsi_period,omitempty"`
+	AnalysisMacdFastPeriod   int     `yaml:"analysis_macd_fast_period,omitempty"`
+	AnalysisMacdSlowPeriod   int     `yaml:"analysis_macd_slow_period,omitempty"`
+	AnalysisMacdSignalPeriod int     `yaml:"analysis_macd_signal_period,omitempty"`
+	HistoricalDataRange      string  `yaml:"historical_data_range,omitempty"`    // e.g., "1y", "2y"
+	HistoricalDataInterval   string  `yaml:"historical_data_interval,omitempty"` // e.g., "1d", "1wk"
+
+	AIAPI AIConfig `yaml:"ai_api,omitempty"`
+}
+
+// AIConfig holds configuration for the AI summary generation API.
+type AIConfig struct {
+	Enabled               *bool   `yaml:"enabled,omitempty"` // Pointer to distinguish between false and not set
+	Endpoint              string  `yaml:"endpoint,omitempty"`
+	ModelName             string  `yaml:"model_name,omitempty"`
+	MaxTokens             int     `yaml:"max_tokens,omitempty"`
+	Temperature           float64 `yaml:"temperature,omitempty"`
+	RequestTimeoutSeconds int     `yaml:"request_timeout_seconds,omitempty"`
 }
 
 // ConfigColorScheme represents user defined color scheme

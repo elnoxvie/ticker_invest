@@ -16,13 +16,16 @@ import (
 )
 
 const (
-	WidthMarketState    = 5
-	WidthGutter         = 1
-	WidthLabel          = 15
-	WidthName           = 20
-	WidthPositionGutter = 2
-	WidthChangeStatic   = 12 // "↓ " + " (100.00%)" = 12 length
-	WidthRangeStatic    = 3  // " - " = 3 length
+	WidthMarketState        = 5
+	WidthGutter             = 1
+	WidthLabel              = 15
+	WidthName               = 20
+	WidthPositionGutter     = 2
+	DecisionText            = 60
+	AnalysisText            = 60
+	TechnicalIndicatorsText = 20
+	WidthChangeStatic       = 12 // "↓ " + " (100.00%)" = 12 length
+	WidthRangeStatic        = 3  // " - " = 3 length
 )
 
 var lastID int64 //nolint:gochecknoglobals
@@ -47,6 +50,7 @@ type Config struct {
 	ID                    int
 	Separate              bool
 	ShowHoldings          bool
+	ShowAnalysis          bool
 	ExtraInfoExchange     bool
 	ExtraInfoFundamentals bool
 	Styles                c.Styles
@@ -84,7 +88,7 @@ func New(config Config) *Model { // config.Asset is *analysis.AnalyzedAsset
 	return &Model{
 		id:                   id,
 		width:                80,
-		config:               config, // Store the config which has the AnalyzedAsset
+		config:               config,                                                                                                           // Store the config which has the AnalyzedAsset
 		priceNoChangeSegment: u.ConvertFloatToString(config.Asset.BaseAsset.QuotePrice.Price, config.Asset.BaseAsset.Meta.IsVariablePrecision), // Access via BaseAsset
 		priceChangeSegment:   "",
 	}
@@ -148,7 +152,7 @@ func (m *Model) Update(msg tea.Msg) (*Model, tea.Cmd) {
 		}
 
 		// If symbol has changed or price has not changed then just update the asset
-		m.config.Asset = msg // msg is *analysis.AnalyzedAsset
+		m.config.Asset = msg                                                                                                    // msg is *analysis.AnalyzedAsset
 		m.priceNoChangeSegment = u.ConvertFloatToString(msg.BaseAsset.QuotePrice.Price, msg.BaseAsset.Meta.IsVariablePrecision) // Access via BaseAsset
 		m.priceChangeSegment = ""
 
@@ -239,7 +243,6 @@ func (m *Model) View() string {
 }
 
 func (m *Model) buildCells() []grid.Cell { // m.config.Asset is *analysis.AnalyzedAsset
-
 	// Access base asset via m.config.Asset.BaseAsset
 	baseAsset := &m.config.Asset.BaseAsset
 	analysisData := m.config.Asset.Analysis // Store analysis data
@@ -254,8 +257,8 @@ func (m *Model) buildCells() []grid.Cell { // m.config.Asset is *analysis.Analyz
 		}
 	} else {
 		// Build up cells for fundamentals and/or holdings.
-		// The original logic prepends, so we'll follow that pattern carefully.
-		// Start with the quote cell, as it's the rightmost of the financial data.
+		// The original logic prepends, so we\\'ll follow that pattern carefully.
+		// Start with the quote cell, as it\\'s the rightmost of the financial data.
 		currentFinancialCells := []grid.Cell{
 			{Text: textQuote(baseAsset, m.config.Styles, m.priceStyle, m.priceNoChangeSegment, m.priceChangeSegment), Width: m.cellWidths.WidthQuote, Align: grid.Right},
 		}
@@ -319,18 +322,35 @@ func (m *Model) buildCells() []grid.Cell { // m.config.Asset is *analysis.Analyz
 		cells = currentFinancialCells
 	}
 
+	// If ShowAnalysis is true, create and prepend analysis cells to the current `cells`.
+	if m.config.ShowAnalysis {
+		analysisDecisionText := textAnalysisDecision(analysisData, m.config.Styles)
+		technicalIndicatorsText := textTechnicalIndicators(analysisData, m.config.Styles, baseAsset.Meta.IsVariablePrecision)
+		analysisTrendStatusText := textAnalysisTrendStatus(analysisData, m.config.Styles)
 
-	// Append Analysis Decision and Trend Status cells to the financial data
-	analysisDecisionText := textAnalysisDecision(analysisData, m.config.Styles)
-	if analysisDecisionText != "" {
-		cells = append(cells, grid.Cell{Text: analysisDecisionText, Align: grid.Left})
+		analysisCells := []grid.Cell{
+			{
+				Text:     analysisDecisionText,
+				Width:    DecisionText,
+				Align:    grid.Left,
+				Overflow: grid.Wrap,
+			},
+			{
+				Text:     analysisTrendStatusText,
+				Width:    AnalysisText,
+				Align:    grid.Left,
+				Overflow: grid.Wrap,
+			},
+			{
+				Text:     technicalIndicatorsText,
+				Width:    TechnicalIndicatorsText,
+				Align:    grid.Left,
+				Overflow: grid.Wrap,
+			},
+		}
+		cells = append(analysisCells, cells...) // Prepend analysis cells
 	}
 
-	analysisTrendStatusText := textAnalysisTrendStatus(analysisData, m.config.Styles)
-	if analysisTrendStatusText != "" {
-		cells = append(cells, grid.Cell{Text: analysisTrendStatusText, Align: grid.Left})
-	}
-	
 	// Initial Name and Market State cells
 	nameAndMarketStateCells := []grid.Cell{
 		{Text: textName(baseAsset, m.config.Styles), Width: WidthName},
@@ -354,7 +374,11 @@ func textAnalysisDecision(analysisResult analysis.AnalysisResults, styles c.Styl
 		return "" // Or "N/A" if preferred: return styles.TextLabel("N/A")
 	}
 	strippedDecision := u.StripRichTags(analysisResult.Decision)
-	return styles.Text(strippedDecision) // styles.Text should handle plain text fine
+	decisionText := styles.Text(strippedDecision)
+	if analysisResult.DecisionSummary != "" {
+		decisionText += "\n" + styles.TextLabel(analysisResult.DecisionSummary) // Append summary if available
+	}
+	return decisionText
 }
 
 // Helper function for Analysis Trend Status
@@ -363,7 +387,58 @@ func textAnalysisTrendStatus(analysisResult analysis.AnalysisResults, styles c.S
 		return "" // Or "N/A": return styles.TextLabel("N/A")
 	}
 	strippedTrendStatus := u.StripRichTags(analysisResult.TrendStatus)
-	return styles.Text(strippedTrendStatus) // styles.Text should handle plain text fine
+	trendText := styles.Text(strippedTrendStatus)
+	if analysisResult.TrendSummary != "" {
+		trendText += "\n" + styles.TextLabel(analysisResult.TrendSummary) // Append summary if available
+	}
+	return trendText
+}
+
+// Helper function for Technical Indicators
+func textTechnicalIndicators(analysisResult analysis.AnalysisResults, styles c.Styles, isVariablePrecision bool) string {
+	if analysisResult.LastHistoricalPointWithIndicators == nil {
+		return "" // Or "N/A"
+	}
+
+	histPoint := analysisResult.LastHistoricalPointWithIndicators
+	var parts []string
+
+	if histPoint.SMA50 != nil && *histPoint.SMA50 != 0 {
+		parts = append(parts, styles.TextLabel("SMA50: ")+styles.Text(u.ConvertFloatToString(*histPoint.SMA50, isVariablePrecision)))
+	}
+	if histPoint.SMA200 != nil && *histPoint.SMA200 != 0 {
+		parts = append(parts, styles.TextLabel("SMA200: ")+styles.Text(u.ConvertFloatToString(*histPoint.SMA200, isVariablePrecision)))
+	}
+	if histPoint.RSI != nil && *histPoint.RSI != 0 {
+		parts = append(parts, styles.TextLabel("RSI: ")+styles.Text(u.ConvertFloatToString(*histPoint.RSI, isVariablePrecision)))
+	}
+	if histPoint.ATR != nil && *histPoint.ATR != 0 {
+		parts = append(parts, styles.TextLabel("ATR: ")+styles.Text(u.ConvertFloatToString(*histPoint.ATR, isVariablePrecision)))
+	}
+	if histPoint.MACD != nil && *histPoint.MACD != 0 {
+		parts = append(parts, styles.TextLabel("MACD: ")+styles.Text(u.ConvertFloatToString(*histPoint.MACD, isVariablePrecision)))
+	}
+	if histPoint.MACDSignal != nil && *histPoint.MACDSignal != 0 {
+		parts = append(parts, styles.TextLabel("Signal: ")+styles.Text(u.ConvertFloatToString(*histPoint.MACDSignal, isVariablePrecision)))
+	}
+	if histPoint.MACDHist != nil && *histPoint.MACDHist != 0 {
+		parts = append(parts, styles.TextLabel("Hist: ")+styles.Text(u.ConvertFloatToString(*histPoint.MACDHist, isVariablePrecision)))
+	}
+
+	// Add Support and Resistance from AnalysisResults
+	if analysisResult.Support != nil && *analysisResult.Support != 0 {
+		parts = append(parts, styles.TextLabel("Support: ")+styles.Text(u.ConvertFloatToString(*analysisResult.Support, isVariablePrecision)))
+	}
+	if analysisResult.Resistance != nil && *analysisResult.Resistance != 0 {
+		parts = append(parts, styles.TextLabel("Resistance: ")+styles.Text(u.ConvertFloatToString(*analysisResult.Resistance, isVariablePrecision)))
+	}
+
+	if len(parts) == 0 {
+		return "" // Or "N/A"
+	}
+	// Join with a newline for vertical stacking.
+	// This will make each indicator appear on a new line within the same cell.
+	return strings.Join(parts, "\n")
 }
 
 // The caller (buildCells) is responsible for passing the correct part of AnalyzedAsset.

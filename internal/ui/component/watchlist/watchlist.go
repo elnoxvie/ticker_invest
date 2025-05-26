@@ -19,6 +19,7 @@ type Config struct {
 	ShowHoldings          bool
 	ExtraInfoExchange     bool
 	ExtraInfoFundamentals bool
+	ShowAnalysis          bool // Added
 	Sort                  string
 	Styles                c.Styles
 }
@@ -26,7 +27,7 @@ type Config struct {
 // Model for watchlist section
 type Model struct {
 	width          int
-	assets         []*analysis.AnalyzedAsset // Changed
+	assets         []*analysis.AnalyzedAsset          // Changed
 	assetsBySymbol map[string]*analysis.AnalyzedAsset // Changed
 	sorter         s.Sorter
 	config         Config
@@ -47,7 +48,7 @@ func NewModel(config Config) *Model {
 	return &Model{
 		width:          80,
 		config:         config,
-		assets:         make([]*analysis.AnalyzedAsset, 0), // Changed
+		assets:         make([]*analysis.AnalyzedAsset, 0),       // Changed
 		assetsBySymbol: make(map[string]*analysis.AnalyzedAsset), // Changed
 		sorter:         s.NewSorter(config.Sort),
 		rowsBySymbol:   make(map[string]*row.Model),
@@ -68,7 +69,7 @@ func (m *Model) Update(msg tea.Msg) (*Model, tea.Cmd) {
 		cmds := make([]tea.Cmd, 0)
 
 		// Convert []analysis.AnalyzedAsset to []*analysis.AnalyzedAsset and update assetsBySymbol map
-		assets := make([]*analysis.AnalyzedAsset, len(msg)) // Changed type
+		assets := make([]*analysis.AnalyzedAsset, len(msg))        // Changed type
 		assetsBySymbol := make(map[string]*analysis.AnalyzedAsset) // Changed type
 
 		for i := range msg {
@@ -76,6 +77,9 @@ func (m *Model) Update(msg tea.Msg) (*Model, tea.Cmd) {
 			assetsBySymbol[msg[i].BaseAsset.Symbol] = assets[i] // Changed to use BaseAsset.Symbol
 		}
 
+		// The sorter expects []*analysis.AnalyzedAsset, so this should now be correct.
+		// If m.sorter was defined to take []*common.Asset, its definition or the call needs to be adjusted.
+		// Assuming m.sorter is compatible with []*analysis.AnalyzedAsset as per the surrounding type changes.
 		assets = m.sorter(assets)
 
 		for i, asset := range assets { // asset is now *analysis.AnalyzedAsset
@@ -91,6 +95,7 @@ func (m *Model) Update(msg tea.Msg) (*Model, tea.Cmd) {
 					ExtraInfoExchange:     m.config.ExtraInfoExchange,
 					ExtraInfoFundamentals: m.config.ExtraInfoFundamentals,
 					ShowHoldings:          m.config.ShowHoldings,
+					ShowAnalysis:          m.config.ShowAnalysis, // Added
 					Styles:                m.config.Styles,
 					Asset:                 asset, // asset is *analysis.AnalyzedAsset
 				}))

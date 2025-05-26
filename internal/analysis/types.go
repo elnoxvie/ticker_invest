@@ -12,16 +12,18 @@ import (
 // This includes trend status, volume analysis, support/resistance levels,
 // the final trading decision, and the most recent historical data point with all indicators.
 type AnalysisResults struct {
-	TrendStatus         string // Textual description of the current trend (e.g., "Strong Uptrend").
-	VolumeStatus        string // Textual description of the current volume status (e.g., "SURGE").
-	IsStrongUpTrend     bool   // True if a strong uptrend is detected.
-	IsStrongDownTrend   bool   // True if a strong downtrend is detected.
-	IsVolumeSurge       bool   // True if a significant volume surge is detected.
-	PriceAboveSMA50     bool   // True if the current price is above the 50-period SMA.
-	PriceAboveSMA200    bool   // True if the current price is above the 200-period SMA.
-	Support             *float64 // Calculated short-term support level. Nil if not determinable.
-	Resistance          *float64 // Calculated short-term resistance level. Nil if not determinable.
-	Decision            string   // The final consolidated trading decision (e.g., "BUY", "SELL", "HOLD").
+	TrendStatus       string   // Textual description of the current trend (e.g., "Strong Uptrend").
+	VolumeStatus      string   // Textual description of the current volume status (e.g., "SURGE").
+	IsStrongUpTrend   bool     // True if a strong uptrend is detected.
+	IsStrongDownTrend bool     // True if a strong downtrend is detected.
+	IsVolumeSurge     bool     // True if a significant volume surge is detected.
+	PriceAboveSMA50   bool     // True if the current price is above the 50-period SMA.
+	PriceAboveSMA200  bool     // True if the current price is above the 200-period SMA.
+	Support           *float64 // Calculated short-term support level. Nil if not determinable.
+	Resistance        *float64 // Calculated short-term resistance level. Nil if not determinable.
+	Decision          string   // The final consolidated trading decision (e.g., "BUY", "SELL", "HOLD").
+	DecisionSummary   string   // AI-generated summary for the decision.
+	TrendSummary      string   // AI-generated summary for the trend.
 	// LastHistoricalPointWithIndicators stores the latest historical data point,
 	// which includes all calculated technical indicators. This is useful for displaying
 	// current indicator values in the UI.

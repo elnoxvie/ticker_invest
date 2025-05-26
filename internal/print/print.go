@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/achannarasappa/ticker/v4/internal/analysis" // Added for AnalyzedAsset
 	"github.com/achannarasappa/ticker/v4/internal/asset"
 	c "github.com/achannarasappa/ticker/v4/internal/common"
 	mon "github.com/achannarasappa/ticker/v4/internal/monitor"
@@ -27,6 +28,12 @@ type jsonRow struct {
 	Cost     string `json:"cost"`
 	Quantity string `json:"quantity"`
 	Weight   string `json:"weight"`
+	// Added fields for analysis results
+	Decision     string `json:"decision,omitempty"`
+	TrendStatus  string `json:"trend_status,omitempty"`
+	VolumeStatus string `json:"volume_status,omitempty"`
+	Support      string `json:"support,omitempty"`
+	Resistance   string `json:"resistance,omitempty"`
 }
 
 type jsonSummary struct {
@@ -35,15 +42,16 @@ type jsonSummary struct {
 	DayChangeAmount    string `json:"day_change_amount"`
 	DayChangePercent   string `json:"day_change_percent"`
 	TotalChangeAmount  string `json:"total_change_amount"`
-	TotalChangePercent string `json:"total_change_percent"`
+	TotalChangePercent string `json:"total_change_percent"` // Added string type
 }
 
-func convertAssetsToCSV(assets []c.Asset) string {
+func convertAnalyzedAssetsToCSV(analyzedAssets []analysis.AnalyzedAsset) string { // Changed parameter type
 	rows := [][]string{
-		{"name", "symbol", "price", "value", "cost", "quantity", "weight"},
+		{"name", "symbol", "price", "value", "cost", "quantity", "weight", "decision", "trend_status", "volume_status", "support", "resistance"}, // Added analysis headers
 	}
 
-	for _, asset := range assets {
+	for _, analyzedAsset := range analyzedAssets { // Iterate over analyzedAssets
+		asset := analyzedAsset.BaseAsset // Extract BaseAsset
 		if asset.Holding.Quantity > 0 {
 			rows = append(rows, []string{
 				asset.Name,
@@ -53,6 +61,12 @@ func convertAssetsToCSV(assets []c.Asset) string {
 				util.ConvertFloatToString(asset.Holding.Cost, true),
 				util.ConvertFloatToString(asset.Holding.Quantity, true),
 				util.ConvertFloatToString(asset.Holding.Weight, true),
+				// Add analysis data
+				analyzedAsset.Analysis.Decision,
+				analyzedAsset.Analysis.TrendStatus,
+				analyzedAsset.Analysis.VolumeStatus,
+				fmt.Sprintf("%.2f", analyzedAsset.Analysis.Support),    // Format float
+				fmt.Sprintf("%.2f", analyzedAsset.Analysis.Resistance), // Format float
 			})
 		}
 	}
@@ -66,10 +80,11 @@ func convertAssetsToCSV(assets []c.Asset) string {
 
 }
 
-func convertAssetsToJSON(assets []c.Asset) string {
+func convertAnalyzedAssetsToJSON(analyzedAssets []analysis.AnalyzedAsset) string { // Changed parameter type
 	var rows []jsonRow
 
-	for _, asset := range assets {
+	for _, analyzedAsset := range analyzedAssets { // Iterate over analyzedAssets
+		asset := analyzedAsset.BaseAsset // Extract BaseAsset
 		if asset.Holding.Quantity > 0 {
 			rows = append(rows, jsonRow{
 				Name:     asset.Name,
@@ -79,6 +94,12 @@ func convertAssetsToJSON(assets []c.Asset) string {
 				Cost:     fmt.Sprintf("%f", asset.Holding.Cost),
 				Quantity: fmt.Sprintf("%f", asset.Holding.Quantity),
 				Weight:   fmt.Sprintf("%f", asset.Holding.Weight),
+				// Add analysis data
+				Decision:     analyzedAsset.Analysis.Decision,
+				TrendStatus:  analyzedAsset.Analysis.TrendStatus,
+				VolumeStatus: analyzedAsset.Analysis.VolumeStatus,
+				Support:      fmt.Sprintf("%.2f", analyzedAsset.Analysis.Support),
+				Resistance:   fmt.Sprintf("%.2f", analyzedAsset.Analysis.Resistance),
 			})
 		}
 	}
@@ -156,15 +177,16 @@ func Run(dep *c.Dependencies, ctx *c.Context, options *Options) func(*cobra.Comm
 		})
 		monitors.SetAssetGroup(ctx.Groups[0], 0) //nolint:errcheck
 		assetGroupQuote := monitors.GetAssetGroupQuote()
-		assets, _ := asset.GetAssets(*ctx, assetGroupQuote)
+		// Use GetAnalyzedAssets and handle the new return types
+		analyzedAssets, _ := asset.GetAnalyzedAssets(*ctx, assetGroupQuote, monitors.UnaryAPIYahoo) // Changed to access the field directly
 
 		if options.Format == "csv" {
-			fmt.Println(convertAssetsToCSV(assets))
+			fmt.Println(convertAnalyzedAssetsToCSV(analyzedAssets)) // Use new CSV conversion function
 
 			return
 		}
 
-		fmt.Println(convertAssetsToJSON(assets))
+		fmt.Println(convertAnalyzedAssetsToJSON(analyzedAssets)) // Use new JSON conversion function
 	}
 }
 
@@ -183,7 +205,8 @@ func RunSummary(dep *c.Dependencies, ctx *c.Context, options *Options) func(cmd 
 		})
 		monitors.SetAssetGroup(ctx.Groups[0], 0) //nolint:errcheck
 		assetGroupQuote := monitors.GetAssetGroupQuote()
-		_, holdingSummary := asset.GetAssets(*ctx, assetGroupQuote)
+		// Use GetAnalyzedAssets and handle the new return types
+		_, holdingSummary := asset.GetAnalyzedAssets(*ctx, assetGroupQuote, monitors.UnaryAPIYahoo) // Changed to access the field directly
 
 		if options.Format == "csv" {
 			fmt.Println(convertSummaryToCSV(holdingSummary))

@@ -10,26 +10,36 @@ import (
 	c "github.com/achannarasappa/ticker/v4/internal/common"
 	"github.com/achannarasappa/ticker/v4/internal/print"
 	"github.com/achannarasappa/ticker/v4/internal/ui"
+	"github.com/achannarasappa/ticker/v4/web" // Added for web server mode
 )
 
 //nolint:gochecknoglobals
 var (
 	// Version is a placeholder that is replaced at build time with a linker flag (-ldflags)
-	Version      = "v0.0.0"
-	configPath   string
-	dep          c.Dependencies
-	ctx          c.Context
-	config       c.Config
-	options      cli.Options
-	optionsPrint print.Options
-	err          error
-	rootCmd      = &cobra.Command{
+	Version        = "v0.0.0"
+	configPath     string
+	startWebServer bool // Added for web server mode toggle
+	dep            c.Dependencies
+	ctx            c.Context
+	config         c.Config
+	options        cli.Options
+	optionsPrint   print.Options
+	err            error
+	rootCmd        = &cobra.Command{
 		Version: Version,
 		Use:     "ticker",
 		Short:   "Terminal stock ticker and stock gain/loss tracker",
 		PreRun:  initContext,
 		Args:    cli.Validate(&config, &options, &err),
-		Run:     cli.Run(ui.Start(&dep, &ctx)),
+		Run: func(cmd *cobra.Command, args []string) { // Modified to check startWebServer flag
+			if startWebServer {
+				// web.StartWebServer initializes its own config and context as per current design
+				web.StartWebServer()
+			} else {
+				// Original CLI run logic
+				cli.Run(ui.Start(&dep, &ctx))(cmd, args)
+			}
+		},
 	}
 	printCmd = &cobra.Command{
 		Use:    "print",
@@ -68,6 +78,7 @@ func init() { //nolint: gochecknoinits
 	rootCmd.Flags().BoolVar(&options.ShowHoldings, "show-holdings", false, "display average unit cost, quantity, portfolio weight")
 	rootCmd.Flags().BoolVar(&options.ShowAnalysis, "show-analysis", false, "display analysis for each quote")
 	rootCmd.Flags().StringVar(&options.Sort, "sort", "", "sort quotes on the UI. Set \"alpha\" to sort by ticker name. Set \"value\" to sort by position value. Keep empty to sort according to change percent")
+	rootCmd.Flags().BoolVar(&startWebServer, "web", false, "start web server") // Added web server flag
 
 	printCmd.PersistentFlags().StringVar(&optionsPrint.Format, "format", "", "output format for printing holdings. Set \"csv\" to print as a CSV or \"json\" for JSON. Defaults to JSON.")
 	printCmd.PersistentFlags().StringVar(&configPath, "config", "", "config file (default is $HOME/.ticker.yaml)")

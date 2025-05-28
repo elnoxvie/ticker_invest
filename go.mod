@@ -10,6 +10,7 @@ require (
 	github.com/adrg/xdg v0.4.0
 	github.com/charmbracelet/bubbles v0.10.3
 	github.com/charmbracelet/bubbletea v1.3.3
+	github.com/charmbracelet/lipgloss v1.0.0
 	github.com/gorilla/websocket v1.5.3
 	github.com/lucasb-eyer/go-colorful v1.2.0
 	github.com/mitchellh/go-homedir v1.1.0
@@ -25,7 +26,6 @@ require (
 
 require (
 	github.com/aymanbagabas/go-osc52/v2 v2.0.1 // indirect
-	github.com/charmbracelet/lipgloss v1.0.0 // indirect
 	github.com/charmbracelet/x/ansi v0.8.0 // indirect
 	github.com/charmbracelet/x/term v0.2.1 // indirect
 	github.com/erikgeiser/coninput v0.0.0-20211004153227-1c3628e74d0f // indirect
